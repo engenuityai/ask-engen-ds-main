@@ -1,10 +1,8 @@
 """OpenRouter free-tier provider.
 
-Handles HTTP calls to the OpenRouter chat-completions endpoint and owns the
-weekly-token-based model-rotation logic (Nemotron Lightning → Nemotron Ultra).
-
-OPEN_ROUTER_KEY lives in the DS .env — the backend never sends it.
-The model pool and weekly limits live in token_tracker.py.
+Owns the HTTP call to OpenRouter and the weekly-token-based model rotation
+(Nemotron Lightning → Nemotron Ultra). OPEN_ROUTER_KEY is in DS .env — the
+backend never sends it. Model pool and limits live in token_tracker.py.
 """
 
 from typing import Optional
@@ -47,7 +45,7 @@ def _map_status(status: int, body: str) -> str:
 
 
 def _http_call(system: str, user: str, model: str, max_tokens: int) -> LLMResult:
-    """Raw HTTP request to OpenRouter — no token tracking or rotation here."""
+    """Raw HTTP request to OpenRouter — no token tracking or rotation."""
     api_key = settings.open_router_key
     if not api_key:
         raise LLMProviderError(
@@ -125,11 +123,10 @@ def call_openrouter_public(
 ) -> LLMResult:
     """Free-tier entry point with weekly-token-based model rotation.
 
-    Rotation order: Nemotron Lightning → Nemotron Ultra (see token_tracker).
     Raises TokenLimitExceededError when the prompt exceeds every model's safe
     context window so the pipeline can surface a friendly message upstream.
     """
-    from src.core.llm import token_tracker
+    from src.core.llm.providers.free.openrouter import token_tracker
 
     if static_context:
         user = f"{static_context}\n\n{user}"
@@ -149,9 +146,3 @@ def call_openrouter_public(
     result = _http_call(system, user, active_model, max_tokens)
     token_tracker.add_tokens(active_model, result.input_tokens + result.output_tokens)
     return result
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat alias — call_openrouter was imported by client.py
-# ---------------------------------------------------------------------------
-call_openrouter = _http_call

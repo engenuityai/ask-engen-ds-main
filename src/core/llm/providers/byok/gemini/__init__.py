@@ -1,8 +1,7 @@
-"""Gemini paid provider.
+"""Gemini paid provider (BYOK — key received via POST /llm/test-key).
 
-API key is supplied by the backend via POST /llm/test-key (stored in llm_store).
-Supports in-process context caching (gemini_cache) for Agent 1's large static
-prompt block — falls back to inline context when the cache is unavailable.
+Supports in-process context caching for Agent 1's large static prompt block.
+Falls back to inline context when the cache is unavailable.
 """
 
 from typing import Optional
@@ -22,7 +21,7 @@ from src.core.llm.types import (
 # Error mapping
 # ---------------------------------------------------------------------------
 
-def map_gemini_exception(exc: "GoogleAPICallError") -> LLMProviderError:
+def map_exception(exc: "GoogleAPICallError") -> LLMProviderError:
     message = str(exc)
     lowered = message.lower()
     status = getattr(exc, "code", None)
@@ -74,11 +73,6 @@ def call_gemini(
     model_name: str,
     static_context: Optional[str],
 ) -> LLMResult:
-    """Call the Gemini paid API.
-
-    Uses context caching when ``static_context`` is provided and caching is
-    enabled in settings; falls back to prepending it inline otherwise.
-    """
     import google.generativeai as genai
     from google.api_core.exceptions import GoogleAPICallError
 
@@ -87,9 +81,9 @@ def call_gemini(
 
     cached_content = None
     if static_context and settings.gemini_context_cache_enabled:
-        from src.core.llm import gemini_cache
+        from src.core.llm.providers.byok.gemini.cache import get_or_create_cache
 
-        cached_content = gemini_cache.get_or_create_cache(
+        cached_content = get_or_create_cache(
             mode=mode,
             model_name=model_name,
             system_instruction=system,
@@ -111,7 +105,7 @@ def call_gemini(
     except GoogleAPICallError as exc:
         if is_token_limit_error(str(exc)):
             raise TokenLimitExceededError(str(exc)) from exc
-        raise map_gemini_exception(exc) from exc
+        raise map_exception(exc) from exc
 
     usage = response.usage_metadata
     return LLMResult(

@@ -143,7 +143,7 @@ async def get_public_usage():
     Called by the backend to populate the LLM Configuration page's public-mode
     table with live progress bars.
     """
-    from src.core.llm import token_tracker
+    from src.core.llm.providers.free.openrouter import token_tracker
 
     active_model = await asyncio.to_thread(token_tracker.get_active_model)
     models = []

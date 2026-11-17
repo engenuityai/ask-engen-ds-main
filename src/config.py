@@ -18,7 +18,7 @@ KNOWLEDGE_DIR = DATA_DIR / "knowledge"
 class ModelPricing:
     """USD per 1M tokens. `cache_read` is what a cache-hit token on the
     *input* side costs (Gemini explicit context caching — see
-    src.utils.gemini_cache) — always cheaper than a fresh input token, and
+    src.core.llm.providers.byok.gemini.cache) — always cheaper than a fresh input token, and
     separate from `input`, which only applies to the non-cached portion of
     the prompt. 0.0 for models/providers with no caching discount."""
 
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # "no known deprecation date" -> always shown Active.
     gemini_model_data_processing_deprecation_date: Optional[date] = None
     gemini_model_enrichment_deprecation_date: Optional[date] = None
-    # Explicit Gemini context caching (see src.utils.gemini_cache) for agent
+    # Explicit Gemini context caching (see src.core.llm.providers.byok.gemini.cache) for agent
     # 1's static context — schema + data_context + analytics_patterns, plus
     # the task's literal instructions/output contract — none of which vary
     # per request, only when a project's schema/data_context files change.
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # no-op anyway.
     gemini_context_cache_enabled: bool = True
     # How long Gemini keeps the cached content alive before it must be
-    # recreated. The cache key (src.utils.gemini_cache._cache_key) already
+    # recreated. The cache key (src.core.llm.providers.byok.gemini.cache._cache_key) already
     # hashes mode+model+content, so a longer TTL is a pure cost/latency win,
     # never a correctness risk: the moment a project's schema/data_context
     # changes (re-confirm with new data), the hash changes, the old key just

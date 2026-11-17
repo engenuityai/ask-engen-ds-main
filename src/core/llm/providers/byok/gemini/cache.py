@@ -1,7 +1,8 @@
-"""In-process registry of Gemini explicit context caches (`CachedContent`)
-for agent 1's static prompt block. See src/utils/gemini_cache.py for the
-original — this is the definitive location; the original is a backward-compat
-re-export.
+"""In-process registry of Gemini CachedContent objects for Agent 1's static prompt block.
+
+Each cache entry is keyed by (mode, model_name, sha256(system + static_context)).
+Entries are reused until 60s before Gemini's own expiry, then recreated.
+Falls back gracefully (returns None) if the Gemini caching API is unavailable.
 """
 
 import hashlib
@@ -19,12 +20,13 @@ class _CacheEntry:
 
 
 _REGISTRY: dict[str, _CacheEntry] = {}
-
 _EXPIRY_SAFETY_MARGIN = timedelta(seconds=60)
 
 
 def _cache_key(mode: str, model_name: str, system_instruction: str, static_context: str) -> str:
-    digest = hashlib.sha256(f"{system_instruction}\x00{static_context}".encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(
+        f"{system_instruction}\x00{static_context}".encode("utf-8")
+    ).hexdigest()[:16]
     return f"{mode}:{model_name}:{digest}"
 
 
@@ -36,7 +38,7 @@ def get_or_create_cache(
     static_context: str,
     ttl_seconds: int,
 ) -> Optional[Any]:
-    """Returns a live CachedContent or None on failure (graceful degradation)."""
+    """Return a live CachedContent, or None on failure (graceful degradation)."""
     key = _cache_key(mode, model_name, system_instruction, static_context)
     now = datetime.now(timezone.utc)
 
@@ -59,11 +61,14 @@ def get_or_create_cache(
         console_log(
             mode,
             "GEMINI_CACHE",
-            f"cache create failed for key={key!r} (falling back to inline static context): {exc}",
+            f"cache create failed for key={key!r} (falling back to inline): {exc}",
         )
         return None
 
-    _REGISTRY[key] = _CacheEntry(cached_content=cached_content, expires_at=now + timedelta(seconds=ttl_seconds))
+    _REGISTRY[key] = _CacheEntry(
+        cached_content=cached_content,
+        expires_at=now + timedelta(seconds=ttl_seconds),
+    )
     console_log(
         mode,
         "GEMINI_CACHE",
