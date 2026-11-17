@@ -1,21 +1,29 @@
-"""OpenRouter AI client — used exclusively in public mode.
+"""OpenRouter free-tier provider.
 
-OpenRouter exposes an OpenAI-compatible chat-completions endpoint, so this
-is a thin synchronous requests wrapper that returns the same LLMResult shape
-as every other provider in this module.
+Handles HTTP calls to the OpenRouter chat-completions endpoint and owns the
+weekly-token-based model-rotation logic (Nemotron Lightning → Nemotron Ultra).
 
-OPEN_ROUTER_KEY lives in DS .env.  The backend never sends it.
+OPEN_ROUTER_KEY lives in the DS .env — the backend never sends it.
+The model pool and weekly limits live in token_tracker.py.
 """
+
+from typing import Optional
+
 import requests
 
 from src.config import settings
-from src.core.llm.client import LLMProviderError, LLMResult, TokenLimitExceededError
+from src.core.llm.types import (
+    LLMProviderError,
+    LLMResult,
+    TokenLimitExceededError,
+    is_token_limit_error,
+)
+from src.utils.logging_utils import console_log
 
 
-def _is_token_limit(text: str) -> bool:
-    low = text.lower()
-    return "token" in low and ("exceed" in low or "too long" in low or "too many" in low)
-
+# ---------------------------------------------------------------------------
+# HTTP transport
+# ---------------------------------------------------------------------------
 
 def _map_status(status: int, body: str) -> str:
     low = body.lower()
@@ -38,11 +46,14 @@ def _map_status(status: int, body: str) -> str:
     return "api_error"
 
 
-def call_openrouter(system: str, user: str, model: str, max_tokens: int) -> LLMResult:
-    """Submit a chat-completion request to OpenRouter and return an LLMResult."""
+def _http_call(system: str, user: str, model: str, max_tokens: int) -> LLMResult:
+    """Raw HTTP request to OpenRouter — no token tracking or rotation here."""
     api_key = settings.open_router_key
     if not api_key:
-        raise LLMProviderError("authentication", "OPEN_ROUTER_KEY is not configured in the DS environment")
+        raise LLMProviderError(
+            "authentication",
+            "OPEN_ROUTER_KEY is not configured in the DS environment",
+        )
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -71,7 +82,7 @@ def call_openrouter(system: str, user: str, model: str, max_tokens: int) -> LLMR
         raise LLMProviderError("service_unavailable", f"Could not reach OpenRouter: {exc}") from exc
     except requests.exceptions.HTTPError as exc:
         body = exc.response.text if exc.response is not None else ""
-        if _is_token_limit(body):
+        if is_token_limit_error(body):
             raise TokenLimitExceededError(body) from exc
         code = _map_status(exc.response.status_code, body)
         raise LLMProviderError(code, body) from exc
@@ -80,18 +91,67 @@ def call_openrouter(system: str, user: str, model: str, max_tokens: int) -> LLMR
     choice = data["choices"][0]
     usage = data.get("usage", {})
     content = choice["message"].get("content") or ""
+
     if not content:
-        # Some free models return null content (e.g. refusals, tool-call-only
-        # responses). Treat it as an empty response so callers get a string.
         import logging as _logging
         _logging.getLogger(__name__).warning(
             "OpenRouter returned null/empty content for model=%s finish_reason=%s",
             model,
             choice.get("finish_reason"),
         )
+
     return LLMResult(
         text=content,
         input_tokens=usage.get("prompt_tokens", 0),
         output_tokens=usage.get("completion_tokens", 0),
         model=model,
     )
+
+
+# ---------------------------------------------------------------------------
+# Public entry point — token rotation + context-window guard
+# ---------------------------------------------------------------------------
+
+def _estimate_tokens(text: str) -> int:
+    return len(text) // 4
+
+
+def call_openrouter_public(
+    mode: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    static_context: Optional[str] = None,
+) -> LLMResult:
+    """Free-tier entry point with weekly-token-based model rotation.
+
+    Rotation order: Nemotron Lightning → Nemotron Ultra (see token_tracker).
+    Raises TokenLimitExceededError when the prompt exceeds every model's safe
+    context window so the pipeline can surface a friendly message upstream.
+    """
+    from src.core.llm import token_tracker
+
+    if static_context:
+        user = f"{static_context}\n\n{user}"
+
+    estimated = _estimate_tokens(system) + _estimate_tokens(user)
+
+    max_context = max(m["context_window"] for m in token_tracker.PUBLIC_MODEL_POOL)
+    if estimated > max_context * 0.90:
+        raise TokenLimitExceededError(
+            f"Prompt (~{estimated} tokens) exceeds the largest public-mode model's "
+            f"context window ({max_context})"
+        )
+
+    active_model = token_tracker.get_active_model(estimated)
+    console_log(mode, "OPENROUTER", f"model={active_model}, estimated_input={estimated}")
+
+    result = _http_call(system, user, active_model, max_tokens)
+    token_tracker.add_tokens(active_model, result.input_tokens + result.output_tokens)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias — call_openrouter was imported by client.py
+# ---------------------------------------------------------------------------
+call_openrouter = _http_call

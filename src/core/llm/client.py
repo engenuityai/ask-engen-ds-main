@@ -1,136 +1,79 @@
-"""Thin, provider-agnostic LLM wrapper shared by every agent in the pipeline.
+"""LLM router — dispatches call_llm() to the right provider.
 
-Switch providers with the LLM_PROVIDER env var (anthropic | gemini) — no
-call-site changes needed. This is the definitive location; src/utils/llm_client.py
-is a backward-compat re-export.
+Provider selection order
+------------------------
+1. Public mode   → OpenRouter free tier (Nemotron Lightning / Ultra)
+                   Activated when the backend sets mode="public" via /llm/config.
+2. Gemini paid   → google-generativeai SDK, key received via /llm/test-key.
+3. Anthropic     → anthropic SDK, key from settings.anthropic_api_key.
+
+Provider implementations live in their own modules:
+  gemini.py      — Gemini paid (key tested + stored in llm_store)
+  openrouter.py  — OpenRouter free (token rotation, Nemotron models)
 """
 
-from dataclasses import dataclass
 from typing import Optional
 
 from src.config import settings
 from src.core.llm import store as llm_store
+from src.core.llm.types import (
+    ERROR_FRIENDLY_MESSAGES,
+    LLMProviderError,
+    LLMResult,
+    TokenLimitExceededError,
+    is_token_limit_error,
+)
 from src.utils.logging_utils import console_log
 
-
-@dataclass
-class LLMResult:
-    text: str
-    input_tokens: int
-    output_tokens: int
-    model: str
-    cached_tokens: int = 0
-
-
-class TokenLimitExceededError(RuntimeError):
-    """Raised when the prompt exceeds the model's token limit."""
-
-
-class LLMProviderError(RuntimeError):
-    """Raised when the provider API rejects a call. `code` is always one of
-    ERROR_FRIENDLY_MESSAGES' keys."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
+# ---------------------------------------------------------------------------
+# Backward-compat re-exports — callers (pipeline.py, datasets.py, steps.py)
+# import these from client; keep them here so no call-site changes are needed.
+# ---------------------------------------------------------------------------
+__all__ = [
+    "call_llm",
+    "LLMResult",
+    "LLMProviderError",
+    "TokenLimitExceededError",
+    "ERROR_FRIENDLY_MESSAGES",
+]
 
 
-ERROR_FRIENDLY_MESSAGES: dict[str, str] = {
-    "invalid_request": "I couldn't process that request — could you rephrase your question?",
-    "failed_precondition": "This assistant isn't available to answer right now due to a service configuration issue. Please try again shortly.",
-    "out_of_range": "That request is outside what I'm able to handle — could you narrow it down?",
-    "parameter_unknown": "I couldn't process that request — could you rephrase your question?",
-    "authentication": "I'm temporarily unable to reach the underlying service. Please try again shortly.",
-    "permission_denied": "I'm temporarily unable to reach the underlying service. Please try again shortly.",
-    "not_found": "I couldn't find what I needed to answer that — could you rephrase your question?",
-    "model_not_found": "I'm temporarily unable to reach the underlying service. Please try again shortly.",
-    "already_exists": "Something conflicted while handling your request — please try again.",
-    "aborted": "Something conflicted while handling your request — please try again.",
-    "rate_limit_exceeded": "I'm getting a lot of requests right now — please wait a moment and try again.",
-    "quota_exceeded": "I've hit today's usage limit and can't answer right now. Please try again later.",
-    "cancelled": "The request was cancelled before I could finish. Please try again.",
-    "api_error": "Something went wrong on my end. Please try again in a moment.",
-    "unimplemented": "That's not something I'm able to do.",
-    "service_unavailable": "The service is temporarily overloaded right now. Please try again in a moment.",
-    "deadline_exceeded": "I wasn't able to finish processing that in time. Please try again",
-}
-_DEFAULT_ERROR_CODE = "api_error"
-
-
-def _map_gemini_exception(exc: "GoogleAPICallError") -> LLMProviderError:
-    message = str(exc)
-    lowered = message.lower()
-    status = getattr(exc, "code", None)
-
-    if status == 400:
-        if "unknown" in lowered and "parameter" in lowered:
-            code = "parameter_unknown"
-        elif type(exc).__name__ == "FailedPrecondition":
-            code = "failed_precondition"
-        else:
-            code = "invalid_request"
-    elif status == 401:
-        code = "authentication"
-    elif status == 403:
-        code = "permission_denied"
-    elif status == 404:
-        code = "model_not_found" if "model" in lowered else "not_found"
-    elif status == 409:
-        code = "already_exists" if type(exc).__name__ == "AlreadyExists" else "aborted"
-    elif status == 412:
-        code = "failed_precondition"
-    elif status == 416:
-        code = "out_of_range"
-    elif status == 429:
-        code = "quota_exceeded" if "quota" in lowered else "rate_limit_exceeded"
-    elif status == 499:
-        code = "cancelled"
-    elif status == 501:
-        code = "unimplemented"
-    elif status in (502, 503):
-        code = "service_unavailable"
-    elif status == 504:
-        code = "deadline_exceeded"
-    else:
-        code = _DEFAULT_ERROR_CODE
-    return LLMProviderError(code, message)
-
-
-def _map_anthropic_exception(exc: Exception) -> LLMProviderError:
-    import anthropic
-
-    message = str(exc)
-    lowered = message.lower()
-
-    if isinstance(exc, anthropic.APITimeoutError):
-        return LLMProviderError("deadline_exceeded", message)
-    if isinstance(exc, anthropic.APIConnectionError):
-        return LLMProviderError("service_unavailable", message)
-
-    status = getattr(exc, "status_code", None)
-    if status == 400:
-        code = "invalid_request"
-    elif status == 401:
-        code = "authentication"
-    elif status == 403:
-        code = "permission_denied"
-    elif status == 404:
-        code = "model_not_found" if "model" in lowered else "not_found"
-    elif status == 409:
-        code = "aborted"
-    elif status == 429:
-        code = "quota_exceeded" if "quota" in lowered else "rate_limit_exceeded"
-    elif status == 500:
-        code = "api_error"
-    elif status == 529:
-        code = "service_unavailable"
-    else:
-        code = _DEFAULT_ERROR_CODE
-    return LLMProviderError(code, message)
-
+# ---------------------------------------------------------------------------
+# Anthropic (fallback provider)
+# ---------------------------------------------------------------------------
 
 def _call_anthropic(mode: str, system: str, user: str, max_tokens: int) -> LLMResult:
     import anthropic
+
+    from src.core.llm.types import _DEFAULT_ERROR_CODE
+
+    def _map(exc: Exception) -> LLMProviderError:
+        message = str(exc)
+        lowered = message.lower()
+        if isinstance(exc, anthropic.APITimeoutError):
+            return LLMProviderError("deadline_exceeded", message)
+        if isinstance(exc, anthropic.APIConnectionError):
+            return LLMProviderError("service_unavailable", message)
+        status = getattr(exc, "status_code", None)
+        if status == 400:
+            code = "invalid_request"
+        elif status == 401:
+            code = "authentication"
+        elif status == 403:
+            code = "permission_denied"
+        elif status == 404:
+            code = "model_not_found" if "model" in lowered else "not_found"
+        elif status == 409:
+            code = "aborted"
+        elif status == 429:
+            code = "quota_exceeded" if "quota" in lowered else "rate_limit_exceeded"
+        elif status == 500:
+            code = "api_error"
+        elif status == 529:
+            code = "service_unavailable"
+        else:
+            code = _DEFAULT_ERROR_CODE
+        return LLMProviderError(code, message)
 
     api_key = llm_store.get_key(mode, "anthropic") or settings.anthropic_api_key
     client = anthropic.Anthropic(api_key=api_key)
@@ -144,9 +87,10 @@ def _call_anthropic(mode: str, system: str, user: str, max_tokens: int) -> LLMRe
             messages=[{"role": "user", "content": user}],
         )
     except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
-        if _is_token_limit_error(str(exc)):
+        if is_token_limit_error(str(exc)):
             raise TokenLimitExceededError(str(exc)) from exc
-        raise _map_anthropic_exception(exc) from exc
+        raise _map(exc) from exc
+
     text = "".join(block.text for block in response.content if block.type == "text")
     return LLMResult(
         text=text,
@@ -156,94 +100,12 @@ def _call_anthropic(mode: str, system: str, user: str, max_tokens: int) -> LLMRe
     )
 
 
-def _is_token_limit_error(message: str) -> bool:
-    lowered = message.lower()
-    return "token" in lowered and ("exceed" in lowered or "too long" in lowered or "too many" in lowered)
-
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
 
 def _estimate_tokens(text: str) -> int:
     return len(text) // 4
-
-
-def _call_gemini(
-    mode: str,
-    system: str,
-    user: str,
-    max_tokens: int,
-    model_name: str,
-    static_context: Optional[str],
-) -> LLMResult:
-    import google.generativeai as genai
-    from google.api_core.exceptions import GoogleAPICallError
-
-    api_key = llm_store.get_key(mode, "gemini") or settings.gemini_api_key
-    genai.configure(api_key=api_key)
-
-    cached_content = None
-    if static_context and settings.gemini_context_cache_enabled:
-        from src.core.llm import gemini_cache
-
-        cached_content = gemini_cache.get_or_create_cache(
-            mode=mode,
-            model_name=model_name,
-            system_instruction=system,
-            static_context=static_context,
-            ttl_seconds=settings.gemini_cache_ttl_seconds,
-        )
-
-    if cached_content is not None:
-        model = genai.GenerativeModel.from_cached_content(cached_content=cached_content)
-    else:
-        model = genai.GenerativeModel(model_name, system_instruction=system)
-        if static_context:
-            user = f"{static_context}\n\n{user}"
-
-    try:
-        response = model.generate_content(
-            user, generation_config={"max_output_tokens": max_tokens}
-        )
-    except GoogleAPICallError as exc:
-        if _is_token_limit_error(str(exc)):
-            raise TokenLimitExceededError(str(exc)) from exc
-        raise _map_gemini_exception(exc) from exc
-    usage = response.usage_metadata
-    return LLMResult(
-        text=response.text,
-        input_tokens=usage.prompt_token_count,
-        output_tokens=usage.candidates_token_count,
-        model=model_name,
-        cached_tokens=getattr(usage, "cached_content_token_count", 0) or 0,
-    )
-
-
-def _call_openrouter_public(
-    mode: str,
-    system: str,
-    user: str,
-    max_tokens: int,
-    static_context: Optional[str],
-) -> LLMResult:
-    # Lazy import keeps circular-import risk zero: openrouter imports from this
-    # module, but only after this module is fully loaded.
-    from src.core.llm.openrouter import call_openrouter
-    from src.core.llm import token_tracker
-
-    if static_context:
-        user = f"{static_context}\n\n{user}"
-
-    estimated = _estimate_tokens(system) + _estimate_tokens(user)
-    # Raise early if the prompt exceeds every model's safe context window.
-    max_context = max(m["context_window"] for m in token_tracker.PUBLIC_MODEL_POOL)
-    if estimated > max_context * 0.90:
-        raise TokenLimitExceededError(
-            f"Prompt (~{estimated} tokens) exceeds the largest public-mode model's context window ({max_context})"
-        )
-
-    active_model = token_tracker.get_active_model(estimated)
-    console_log(mode, "OPENROUTER", f"model={active_model}, estimated_input={estimated}")
-    result = call_openrouter(system, user, active_model, max_tokens)
-    token_tracker.add_tokens(active_model, result.input_tokens + result.output_tokens)
-    return result
 
 
 def call_llm(
@@ -254,32 +116,55 @@ def call_llm(
     gemini_model: Optional[str] = None,
     gemini_static_context: Optional[str] = None,
 ) -> LLMResult:
+    """Route a prompt to the active provider for ``mode``.
+
+    Args:
+        mode:                 Service mode string (e.g. "analytics").
+        system:               System prompt text.
+        user:                 User / query prompt text.
+        max_tokens:           Output token cap; defaults to settings value.
+        gemini_model:         Override the Gemini model name.
+        gemini_static_context: Large static block passed to Gemini (or OpenRouter)
+                              — eligible for Gemini context caching.
+    """
+    from src.core.llm.gemini import call_gemini
+    from src.core.llm.openrouter import call_openrouter_public
+
     max_tokens = max_tokens or settings.llm_max_output_tokens
 
-    estimated_input_tokens = (
-        _estimate_tokens(system) + _estimate_tokens(user) + _estimate_tokens(gemini_static_context or "")
+    estimated_input = (
+        _estimate_tokens(system)
+        + _estimate_tokens(user)
+        + _estimate_tokens(gemini_static_context or "")
     )
     console_log(
         mode,
         "LLM_CALL",
-        f"estimated input ~{estimated_input_tokens} tokens (cap {settings.llm_max_input_tokens}), "
+        f"estimated input ~{estimated_input} tokens (cap {settings.llm_max_input_tokens}), "
         f"output cap {max_tokens}, provider={settings.llm_provider}",
     )
-    if estimated_input_tokens > settings.llm_max_input_tokens:
+    if estimated_input > settings.llm_max_input_tokens:
         raise TokenLimitExceededError(
-            f"Estimated input size (~{estimated_input_tokens} tokens) exceeds "
+            f"Estimated input size (~{estimated_input} tokens) exceeds "
             f"llm_max_input_tokens ({settings.llm_max_input_tokens})"
         )
 
-    # Public mode: OpenRouter free-tier pool with weekly-token-based rotation.
-    # Checked before env-based routing so an admin save of mode=public overrides LLM_PROVIDER.
+    # Public mode overrides LLM_PROVIDER — checked first so an admin setting
+    # of mode=public always wins regardless of the env-based provider.
     if llm_store.get_mode(mode) == "public":
-        return _call_openrouter_public(mode, system, user, max_tokens, gemini_static_context)
+        return call_openrouter_public(mode, system, user, max_tokens, gemini_static_context)
+
+    if settings.llm_provider == "gemini":
+        return call_gemini(
+            mode,
+            system,
+            user,
+            max_tokens,
+            gemini_model or settings.gemini_model_data_processing,
+            gemini_static_context,
+        )
 
     if settings.llm_provider == "anthropic":
         return _call_anthropic(mode, system, user, max_tokens)
-    if settings.llm_provider == "gemini":
-        return _call_gemini(
-            mode, system, user, max_tokens, gemini_model or settings.gemini_model_data_processing, gemini_static_context
-        )
-    raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
+
+    raise ValueError(f"Unsupported LLM provider: {settings.llm_provider!r}")

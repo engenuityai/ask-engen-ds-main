@@ -80,7 +80,7 @@ def get_active_model(input_tokens: int = 0) -> str:
     3. Last resort: last model in the pool.
 
     Callers should raise TokenLimitExceededError when input_tokens exceeds every
-    model's safe context limit — that check lives in _call_openrouter_public().
+    model's safe context limit — that check lives in call_openrouter_public().
     """
     fits = [
         m for m in PUBLIC_MODEL_POOL
