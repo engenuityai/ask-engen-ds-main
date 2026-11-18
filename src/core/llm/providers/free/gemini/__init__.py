@@ -27,12 +27,12 @@ _client is module-level and created once on first call. The MemoryRateTracker
 state must survive across requests, so never re-instantiate the client.
 """
 
-import os
 from typing import Optional
 
 import google.generativeai as genai
 from google.api_core.exceptions import GoogleAPICallError
 
+from src.config import settings
 from src.core.llm.types import (
     LLMProviderError,
     LLMResult,
@@ -167,7 +167,9 @@ _client: Optional[_FreeGeminiClient] = None
 def _get_client() -> _FreeGeminiClient:
     global _client
     if _client is None:
-        api_key = os.environ.get("FREE_GEMINI_API_KEY", "")
+        # settings.free_gemini_api_key is read from .env by pydantic-settings —
+        # os.environ does NOT contain .env values unless the shell exported them.
+        api_key = settings.free_gemini_api_key or ""
         if not api_key:
             raise LLMProviderError(
                 "authentication",
@@ -199,5 +201,30 @@ def call_gemini_free(
 
 
 def get_usage_stats() -> list[dict]:
-    """Return per-model usage stats for GET /llm/public-usage."""
+    """Return per-model usage stats for GET /llm/public-usage.
+
+    Returns zero-usage stats if the client hasn't been initialised yet
+    (key not set) so the endpoint never 500s just from a missing env var.
+    """
+    if _client is None:
+        # Client not yet initialised — return static zero-usage rows so the
+        # /llm/public-usage endpoint stays healthy even before the key is set.
+        return [
+            {
+                "id":             m["id"],
+                "priority":       m["priority"],
+                "rpm_used":       0,
+                "rpm_limit":      m["rpm_limit"],
+                "rpm_pct":        0.0,
+                "rpd_used":       0,
+                "rpd_limit":      m["rpd_limit"],
+                "rpd_pct":        0.0,
+                "context_window": m["context_window"],
+                "latency_ms":     m["latency_ms"],
+                "released":       m["released"],
+                "is_active":      False,
+                "over_threshold": False,
+            }
+            for m in sorted(MODEL_REGISTRY, key=lambda x: x["priority"])
+        ]
     return _get_client().usage_stats()

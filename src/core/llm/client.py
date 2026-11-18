@@ -84,8 +84,15 @@ def call_llm(
         )
 
     # Public mode (free-tier Gemini) — overrides LLM_PROVIDER env var.
-    # Activated when the backend sets mode="public" via POST /llm/config.
-    if llm_store.get_mode(mode) == "public":
+    # Priority: explicit config via POST /llm/config → env-var fallback.
+    # The env-var fallback means DS restarts don't require re-saving from the
+    # admin UI: if FREE_GEMINI_API_KEY is present and no explicit BYOK config
+    # has been pushed for this mode, public mode is used automatically.
+    _store_mode = llm_store.get_mode(mode)
+    _use_public = _store_mode == "public" or (
+        _store_mode is None and bool(settings.free_gemini_api_key)
+    )
+    if _use_public:
         from src.core.llm.providers.free.gemini import call_gemini_free
         return call_gemini_free(mode, system, user, max_tokens, gemini_static_context)
 
