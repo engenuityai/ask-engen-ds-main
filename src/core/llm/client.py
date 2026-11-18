@@ -2,8 +2,8 @@
 
 call_llm() reads the active mode from llm_store and dispatches:
 
-  mode = "public"  →  providers/free/openrouter/   (OpenRouter, free, DS .env key)
-  mode = byok      →  providers/byok/               (Gemini or Anthropic, key via /llm/test-key)
+  mode = "public"  →  providers/free/gemini/   (free-tier Gemini, DS FREE_GEMINI_API_KEY)
+  mode = byok      →  providers/byok/           (Gemini or Anthropic, key via /llm/test-key)
 
 The gate (gate.py) wraps this function in a semaphore + asyncio.to_thread
 before it reaches any provider, so this router is always called from a
@@ -61,7 +61,6 @@ def call_llm(
                                (prepended inline for OpenRouter).
     """
     from src.core.llm.providers.byok import call_byok
-    from src.core.llm.providers.free.openrouter import call_openrouter_public
 
     max_tokens = max_tokens or settings.llm_max_output_tokens
 
@@ -84,10 +83,11 @@ def call_llm(
             f"llm_max_input_tokens ({settings.llm_max_input_tokens})"
         )
 
-    # Public mode (OpenRouter free tier) — overrides LLM_PROVIDER env var.
+    # Public mode (free-tier Gemini) — overrides LLM_PROVIDER env var.
     # Activated when the backend sets mode="public" via POST /llm/config.
     if llm_store.get_mode(mode) == "public":
-        return call_openrouter_public(mode, system, user, max_tokens, gemini_static_context)
+        from src.core.llm.providers.free.gemini import call_gemini_free
+        return call_gemini_free(mode, system, user, max_tokens, gemini_static_context)
 
     # BYOK — dispatches to Gemini or Anthropic based on settings.llm_provider
     return call_byok(mode, system, user, max_tokens, gemini_model, gemini_static_context)

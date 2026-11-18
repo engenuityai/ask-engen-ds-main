@@ -10,25 +10,33 @@ from pydantic import BaseModel
 from src.core.llm import store as llm_store
 
 # ---------------------------------------------------------------------------
-# Display metadata for the public-mode OpenRouter pool.
-# Keyed by the exact model ID in PUBLIC_MODEL_POOL.
+# Display metadata for the public-mode free Gemini pool.
+# Keyed by the exact model ID in free/gemini/models.py MODEL_REGISTRY.
 # ---------------------------------------------------------------------------
 _PUBLIC_MODEL_DISPLAY: dict[str, dict] = {
-    "nvidia/nemotron-3-ultra-550b-a55b:free": {
-        "name": "NVIDIA Nemotron Ultra 550B",
-        "provider_name": "NVIDIA",
-        "provider_key": "nvidia",
-        "latency": "~1200ms",
-        "latency_ms": 1200,
-        "released": "Jun 2025",
+    "gemini-3.5-flash-lite": {
+        "name": "Gemini 3.5 Flash Lite",
+        "provider_name": "Google",
+        "provider_key": "gemini",
+        "latency": "~600ms",
+        "latency_ms": 600,
+        "released": "Nov 2025",
     },
-    "nvidia/nemotron-3.5-lightning:free": {
-        "name": "NVIDIA Nemotron 3.5 Lightning",
-        "provider_name": "NVIDIA",
-        "provider_key": "nvidia",
-        "latency": "~400ms",
-        "latency_ms": 400,
-        "released": "Jul 2025",
+    "gemini-2.5-flash-lite": {
+        "name": "Gemini 2.5 Flash Lite",
+        "provider_name": "Google",
+        "provider_key": "gemini",
+        "latency": "~700ms",
+        "latency_ms": 700,
+        "released": "Sep 2025",
+    },
+    "gemini-2.5-flash": {
+        "name": "Gemini 2.5 Flash",
+        "provider_name": "Google",
+        "provider_key": "gemini",
+        "latency": "~900ms",
+        "latency_ms": 900,
+        "released": "May 2025",
     },
 }
 
@@ -138,39 +146,61 @@ async def set_config(body: ConfigRequest):
 
 @router.get("/public-usage")
 async def get_public_usage():
-    """Return the current-week token usage for every model in the public pool.
+    """Return RPM + RPD usage for every model in the free Gemini public pool.
 
     Called by the backend to populate the LLM Configuration page's public-mode
     table with live progress bars.
-    """
-    from src.core.llm.providers.free.openrouter import token_tracker
 
-    active_model = await asyncio.to_thread(token_tracker.get_active_model)
+    Response shape (per model):
+      id, name, provider_name, provider_key     — display info
+      rpm_used, rpm_limit, rpm_pct              — requests-per-minute
+      rpd_used, rpd_limit, rpd_pct              — requests-per-day
+      context_window, context_label             — token context size
+      is_active, over_threshold                 — routing state
+      latency, latency_ms, released             — informational
+
+    Legacy fields tokens_used / weekly_limit are set to 0 (not applicable for
+    free Gemini). Update the frontend to use rpm_pct / rpd_pct for progress bars.
+    """
+    from src.core.llm.providers.free.gemini import get_usage_stats
+
+    stats = await asyncio.to_thread(get_usage_stats)
     models = []
-    for m in token_tracker.PUBLIC_MODEL_POOL:
-        model_id = m["id"]
-        weekly_limit = m["weekly_limit"]
-        context_window = m["context_window"]
-        tokens_used = await asyncio.to_thread(token_tracker.get_weekly_usage, model_id)
-        percentage = round(tokens_used / weekly_limit * 100, 2) if weekly_limit else 0.0
-        over = await asyncio.to_thread(token_tracker.is_over_threshold, model_id, weekly_limit)
-        display = _PUBLIC_MODEL_DISPLAY.get(model_id, {})
+    active_model = None
+
+    for s in stats:
+        if s["is_active"]:
+            active_model = s["id"]
+        display = _PUBLIC_MODEL_DISPLAY.get(s["id"], {})
         models.append({
-            "id": model_id,
-            "name": display.get("name", model_id),
-            "provider_name": display.get("provider_name", ""),
-            "provider_key": display.get("provider_key", ""),
-            "weekly_limit": weekly_limit,
-            "weekly_limit_label": _fmt_tokens(weekly_limit),
-            "context_window": context_window,
-            "context_label": _fmt_context(context_window),
-            "tokens_used": tokens_used,
-            "tokens_used_label": _fmt_tokens(tokens_used),
-            "percentage": percentage,
-            "is_active": model_id == active_model,
-            "over_threshold": over,
-            "latency": display.get("latency", ""),
-            "latency_ms": display.get("latency_ms", 0),
-            "released": display.get("released", ""),
+            # Identity + display
+            "id":               s["id"],
+            "name":             display.get("name", s["id"]),
+            "provider_name":    display.get("provider_name", "Google"),
+            "provider_key":     display.get("provider_key", "gemini"),
+            # RPM
+            "rpm_used":         s["rpm_used"],
+            "rpm_limit":        s["rpm_limit"],
+            "rpm_pct":          s["rpm_pct"],
+            # RPD
+            "rpd_used":         s["rpd_used"],
+            "rpd_limit":        s["rpd_limit"],
+            "rpd_pct":          s["rpd_pct"],
+            # Context
+            "context_window":   s["context_window"],
+            "context_label":    _fmt_context(s["context_window"]),
+            # Routing state
+            "is_active":        s["is_active"],
+            "over_threshold":   s["over_threshold"],
+            # Informational
+            "latency":          display.get("latency", ""),
+            "latency_ms":       display.get("latency_ms", s.get("latency_ms", 0)),
+            "released":         display.get("released", s.get("released", "")),
+            # Legacy fields — kept so the existing BE/FE don't break before update
+            "tokens_used":      0,
+            "tokens_used_label": "0",
+            "weekly_limit":     0,
+            "weekly_limit_label": "0",
+            "percentage":       s["rpd_pct"],
         })
     return {"models": models, "active_model": active_model}

@@ -36,6 +36,9 @@ MODEL_PRICING: dict[str, ModelPricing] = {
     # Gemini — rates per Google's published Standard Pay-As-You-Go pricing.
     "gemini-3.6-flash": ModelPricing(input=1.50, output=7.50, cache_read=0.15),
     "gemini-3.5-flash-lite": ModelPricing(input=0.30, output=2.50, cache_read=0.03),
+    # Free-tier Gemini (public mode) — $0 cost; tracked for observability only.
+    "gemini-2.5-flash-lite": ModelPricing(input=0.0, output=0.0, cache_read=0.0),
+    "gemini-2.5-flash":      ModelPricing(input=0.0, output=0.0, cache_read=0.0),
     # Anthropic — no explicit cache_read rate wired up yet (_call_anthropic
     # doesn't use prompt caching), so cache_read stays at the 0.0 default.
     "claude-opus-5": ModelPricing(input=5.00, output=25.00),
@@ -49,7 +52,9 @@ class Settings(BaseSettings):
 
     # LLM provider — switch with LLM_PROVIDER env var, no code change needed.
     llm_provider: Literal["anthropic", "gemini"] = "gemini"
-    # Public-mode key — owned by DS, never sent from the backend.
+    # Public-mode key — free-tier Gemini, owned by DS, never sent from BE.
+    free_gemini_api_key: Optional[str] = None
+    # Legacy OpenRouter key — kept for rollback; no longer used in public mode.
     open_router_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     anthropic_model: str = "claude-opus-5"
