@@ -1,8 +1,8 @@
 """FastAPI routes for the Knowledge (Vector DB) service.
 
 POST /knowledge/ingest           — upload + embed document(s)
-GET  /knowledge/{project}        — list indexed docs
-DELETE /knowledge/{project}/{id} — remove a doc
+GET  /knowledge/{service}        — list indexed docs
+DELETE /knowledge/{service}/{id} — remove a doc
 """
 
 from __future__ import annotations
@@ -70,8 +70,8 @@ async def ingest_documents(
     project_name: str = Form(...),
     files: list[UploadFile] = File(...),
 ) -> dict:
-    project = project_name.strip()
-    if not project:
+    service = project_name.strip()
+    if not service:
         raise HTTPException(status_code=400, detail="project_name is required")
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
@@ -95,23 +95,23 @@ async def ingest_documents(
             )
 
         doc_id = uuid.uuid4().hex
-        entry = vector_store.add_document(project, doc_id, filename, text)
+        entry = vector_store.add_document(service, doc_id, filename, text)
         console_log(
-            project, "KNOWLEDGE_INGEST",
+            service, "KNOWLEDGE_INGEST",
             f"doc_id={doc_id} filename={filename} chunks={entry['chunk_count']}",
         )
         ingested.append(entry)
 
-    return {"success": True, "project_name": project, "documents": ingested}
+    return {"success": True, "service_name": service, "documents": ingested}
 
 
-@router.get("/{project}")
-async def list_documents(project: str) -> dict:
-    docs = vector_store.list_documents(project)
-    return {"project": project, "documents": docs}
+@router.get("/{service}")
+async def list_documents(service: str) -> dict:
+    docs = vector_store.list_documents(service)
+    return {"service": service, "documents": docs}
 
 
-@router.delete("/{project}/{doc_id}")
-async def delete_document(project: str, doc_id: str) -> dict:
-    removed = vector_store.delete_document(project, doc_id)
+@router.delete("/{service}/{doc_id}")
+async def delete_document(service: str, doc_id: str) -> dict:
+    removed = vector_store.delete_document(service, doc_id)
     return {"success": True, "removed": removed}

@@ -1,5 +1,5 @@
-"""Loads and saves the project-level business glossary from/to
-data/<project>/business_glossary.json.
+"""Loads and saves the service-level business glossary from/to
+data/<service>/business_glossary.json.
 
 The glossary is a list of term entries; each entry has a `term` (the
 business label), an optional `definition`, and an optional `notes` field for
@@ -14,12 +14,12 @@ from pathlib import Path
 from src.config import DATA_DIR
 
 
-def _glossary_path(project: str) -> Path:
-    return DATA_DIR / project / "business_glossary.json"
+def _glossary_path(service: str) -> Path:
+    return DATA_DIR / service / "business_glossary.json"
 
 
-def load_glossary(project: str) -> list[dict]:
-    path = _glossary_path(project)
+def load_glossary(service: str) -> list[dict]:
+    path = _glossary_path(service)
     if not path.exists():
         return []
     with open(path, "r", encoding="utf-8") as f:
@@ -27,17 +27,17 @@ def load_glossary(project: str) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def save_glossary(project: str, entries: list[dict]) -> None:
-    path = _glossary_path(project)
+def save_glossary(service: str, entries: list[dict]) -> None:
+    path = _glossary_path(service)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
 
-def render_glossary_block(project: str) -> str:
+def render_glossary_block(service: str) -> str:
     """Returns a compact text block for injection into the LLM's static
     context. Returns an empty string if no glossary exists yet."""
-    entries = load_glossary(project)
+    entries = load_glossary(service)
     if not entries:
         return ""
     lines = ["Business glossary / internal terminology:"]

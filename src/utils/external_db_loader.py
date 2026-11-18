@@ -26,12 +26,12 @@ _TABLE_ROW_LIMIT = 200   # max rows from Excel/CSV converted to markdown
 _NS = "analytics"
 
 
-def _externaldb_path(project: str = _NS) -> Path:  # noqa: ARG001
+def _externaldb_path(service: str = _NS) -> Path:  # noqa: ARG001
     return DATA_DIR / "external" / "externaldb.json"
 
 
-def load_external_db(project: str) -> list[dict]:
-    path = _externaldb_path(project)
+def load_external_db(service: str) -> list[dict]:
+    path = _externaldb_path(service)
     if not path.exists():
         return []
     with open(path, "r", encoding="utf-8") as f:
@@ -39,15 +39,15 @@ def load_external_db(project: str) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def save_external_db(project: str, sources: list[dict]) -> None:
-    path = _externaldb_path(project)
+def save_external_db(service: str, sources: list[dict]) -> None:
+    path = _externaldb_path(service)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(sources, f, indent=2, ensure_ascii=False)
 
 
-def get_source_by_key(project: str, key_name: str) -> dict | None:
-    for src in load_external_db(project):
+def get_source_by_key(service: str, key_name: str) -> dict | None:
+    for src in load_external_db(service):
         if src.get("key_name") == key_name:
             return src
     return None

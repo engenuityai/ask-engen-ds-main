@@ -1,7 +1,7 @@
 """File-based vector store for the Knowledge (RAG) service.
 
-Layout per project:
-  data/<project>/knowledge/
+Layout per service:
+  data/<service>/knowledge/
     index.json            — [{id, name, created_at, chunk_count, status}]
     <doc_id>/
       meta.json           — {id, name, created_at}
@@ -34,31 +34,31 @@ _CHUNK_OVERLAP = 100  # overlap between adjacent chunks
 # Path helpers
 # ---------------------------------------------------------------------------
 
-def _knowledge_root(project: str) -> Path:
-    return DATA_DIR / project / "knowledge"
+def _knowledge_root(service: str) -> Path:
+    return DATA_DIR / service / "knowledge"
 
 
-def _doc_dir(project: str, doc_id: str) -> Path:
-    return _knowledge_root(project) / doc_id
+def _doc_dir(service: str, doc_id: str) -> Path:
+    return _knowledge_root(service) / doc_id
 
 
-def _index_path(project: str) -> Path:
-    return _knowledge_root(project) / "index.json"
+def _index_path(service: str) -> Path:
+    return _knowledge_root(service) / "index.json"
 
 
 # ---------------------------------------------------------------------------
 # Index (metadata list)
 # ---------------------------------------------------------------------------
 
-def _load_index(project: str) -> list[dict]:
-    p = _index_path(project)
+def _load_index(service: str) -> list[dict]:
+    p = _index_path(service)
     if not p.exists():
         return []
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _save_index(project: str, index: list[dict]) -> None:
-    p = _index_path(project)
+def _save_index(service: str, index: list[dict]) -> None:
+    p = _index_path(service)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -146,7 +146,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 # Public API
 # ---------------------------------------------------------------------------
 
-def add_document(project: str, doc_id: str, filename: str, text: str) -> dict[str, Any]:
+def add_document(service: str, doc_id: str, filename: str, text: str) -> dict[str, Any]:
     """Chunk, embed, and persist a document. Returns the index entry."""
     chunks = _chunk_text(text)
     if not chunks:
@@ -155,7 +155,7 @@ def add_document(project: str, doc_id: str, filename: str, text: str) -> dict[st
     embeddings = _embed_batch(chunks)
     chunk_records = [{"text": t, "embedding": e} for t, e in zip(chunks, embeddings)]
 
-    doc_path = _doc_dir(project, doc_id)
+    doc_path = _doc_dir(service, doc_id)
     doc_path.mkdir(parents=True, exist_ok=True)
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -171,31 +171,31 @@ def add_document(project: str, doc_id: str, filename: str, text: str) -> dict[st
     )
 
     entry = {**meta, "status": "indexed"}
-    index = _load_index(project)
+    index = _load_index(service)
     index = [e for e in index if e.get("id") != doc_id]
     index.append(entry)
-    _save_index(project, index)
+    _save_index(service, index)
     return entry
 
 
-def list_documents(project: str) -> list[dict]:
-    return _load_index(project)
+def list_documents(service: str) -> list[dict]:
+    return _load_index(service)
 
 
-def delete_document(project: str, doc_id: str) -> bool:
-    doc_path = _doc_dir(project, doc_id)
+def delete_document(service: str, doc_id: str) -> bool:
+    doc_path = _doc_dir(service, doc_id)
     if doc_path.exists():
         shutil.rmtree(doc_path)
-    index = _load_index(project)
+    index = _load_index(service)
     before = len(index)
     index = [e for e in index if e.get("id") != doc_id]
-    _save_index(project, index)
+    _save_index(service, index)
     return len(index) < before
 
 
-def search(project: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    """Return the top-k most relevant chunks across all docs for this project."""
-    index = _load_index(project)
+def search(service: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """Return the top-k most relevant chunks across all docs for this service."""
+    index = _load_index(service)
     if not index:
         return []
 
@@ -204,7 +204,7 @@ def search(project: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
 
     for entry in index:
         doc_id = entry["id"]
-        chunks_path = _doc_dir(project, doc_id) / "chunks.json"
+        chunks_path = _doc_dir(service, doc_id) / "chunks.json"
         if not chunks_path.exists():
             continue
         chunks = json.loads(chunks_path.read_text(encoding="utf-8"))

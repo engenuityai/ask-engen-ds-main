@@ -88,7 +88,7 @@ def _sample_values(series: pd.Series, limit: int = 6) -> list[str]:
 
 
 class IngestResponse(BaseModel):
-    project_name: str
+    service_name: str
     upload_id: str
     tables: list[dict[str, Any]]
     relationships: list[dict[str, Any]]
@@ -98,8 +98,8 @@ class IngestResponse(BaseModel):
 
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest(project_name: str = Form(...), files: list[UploadFile] = File(...)) -> IngestResponse:
-    project = project_name.strip()
-    if not project:
+    service = project_name.strip()
+    if not service:
         raise HTTPException(status_code=400, detail="project_name is required")
     if not files:
         raise HTTPException(status_code=400, detail="At least one file is required")
@@ -153,7 +153,7 @@ async def ingest(project_name: str = Form(...), files: list[UploadFile] = File(.
     discovered = await _run_schema_discovery(_NS, tables_preview)
 
     return IngestResponse(
-        project_name=project,
+        service_name=service,
         upload_id=upload_id,
         tables=discovered.get("tables", []),
         relationships=discovered.get("relationships", []),
@@ -179,8 +179,8 @@ class IngestJsonRequest(BaseModel):
 
 @router.post("/ingest-json", response_model=IngestResponse)
 async def ingest_json(body: IngestJsonRequest) -> IngestResponse:
-    project = body.project_name.strip()
-    if not project:
+    service = body.project_name.strip()
+    if not service:
         raise HTTPException(status_code=400, detail="project_name is required")
     if not body.tables:
         raise HTTPException(status_code=400, detail="At least one table is required")
@@ -188,11 +188,11 @@ async def ingest_json(body: IngestJsonRequest) -> IngestResponse:
     tables_preview = [t.model_dump() for t in body.tables]
 
     discovered = await _run_schema_discovery(
-        project, tables_preview, body.business_scope, body.user_story
+        service, tables_preview, body.business_scope, body.user_story
     )
 
     return IngestResponse(
-        project_name=project,
+        service_name=service,
         upload_id=body.upload_id,
         tables=discovered.get("tables", []),
         relationships=discovered.get("relationships", []),
@@ -206,7 +206,7 @@ def _strip_fences(text: str) -> str:
 
 
 async def _run_schema_discovery(
-    project: str,
+    service: str,
     tables_preview: list[dict[str, Any]],
     business_scope: str = "",
     user_story: str = "",
@@ -214,7 +214,7 @@ async def _run_schema_discovery(
     system_prompt = prompt_loader.build_agent_system_prompt("schema_relation_builder_agent")
     prompt = prompt_loader.render_task_prompt(
         "schema_discovery_task",
-        business_scope=business_scope or project,
+        business_scope=business_scope or service,
         user_story=user_story,
         sample_row_count=str(settings.schema_sample_rows),
         tables_preview=json.dumps(tables_preview, ensure_ascii=False),
@@ -223,7 +223,7 @@ async def _run_schema_discovery(
     try:
         result = await call_llm_guarded(
             call_llm,
-            project,
+            service,
             system_prompt,
             prompt,
             gemini_model=settings.gemini_model_data_processing,
@@ -240,7 +240,7 @@ async def _run_schema_discovery(
             ),
         ) from exc
 
-    console_log(project, "SCHEMA_DISCOVERY", f"raw decision:\n{result.text}")
+    console_log(service, "SCHEMA_DISCOVERY", f"raw decision:\n{result.text}")
 
     def _parse_json(text: str) -> dict:
         raw = _strip_fences(text)
@@ -252,7 +252,7 @@ async def _run_schema_discovery(
             from json_repair import repair_json  # type: ignore
             repaired = repair_json(raw, return_objects=True)
             if isinstance(repaired, dict):
-                console_log(project, "SCHEMA_DISCOVERY", "JSON repaired by json_repair")
+                console_log(service, "SCHEMA_DISCOVERY", "JSON repaired by json_repair")
                 return repaired
         except Exception:
             pass
@@ -261,11 +261,11 @@ async def _run_schema_discovery(
     decision = _parse_json(result.text)
 
     if decision is None:
-        console_log(project, "SCHEMA_DISCOVERY", "JSON parse failed, retrying LLM call")
+        console_log(service, "SCHEMA_DISCOVERY", "JSON parse failed, retrying LLM call")
         try:
             result = await call_llm_guarded(
                 call_llm,
-                project,
+                service,
                 system_prompt,
                 prompt,
                 gemini_model=settings.gemini_model_data_processing,
@@ -295,7 +295,7 @@ class ConfirmRequest(BaseModel):
 
 class ConfirmResponse(BaseModel):
     success: bool
-    project_name: str
+    service_name: str
     tables: list[str]
 
 
@@ -375,17 +375,17 @@ async def confirm(body: ConfirmRequest) -> ConfirmResponse:
         shutil.rmtree(staging_dir, ignore_errors=True)
         console_log(_NS, "CONFIRM", f"cleaned staging upload_id={body.upload_id}")
 
-    return ConfirmResponse(success=True, project_name=_NS, tables=saved_tables)
+    return ConfirmResponse(success=True, service_name=_NS, tables=saved_tables)
 
 
 class DeleteTableResponse(BaseModel):
     success: bool
-    project_name: str
+    service_name: str
     table_name: str
 
 
-@router.delete("/{project}/table/{table_name}", response_model=DeleteTableResponse)
-async def delete_table(project: str, table_name: str) -> DeleteTableResponse:
+@router.delete("/{service}/table/{table_name}", response_model=DeleteTableResponse)
+async def delete_table(service: str, table_name: str) -> DeleteTableResponse:
     """Remove a single table from DS metadata (schema dir + data_context + relationships + patterns)."""
     ns_dir = DATA_DIR / _NS
 
@@ -433,7 +433,7 @@ async def delete_table(project: str, table_name: str) -> DeleteTableResponse:
         except Exception:
             pass
 
-    return DeleteTableResponse(success=True, project_name=_NS, table_name=table_name)
+    return DeleteTableResponse(success=True, service_name=_NS, table_name=table_name)
 
 
 class ExternalSourceItem(BaseModel):
@@ -469,17 +469,17 @@ async def register_external_source(body: list[ExternalSourceItem]) -> dict:
     return {"success": True, "saved": saved_keys, "files": []}
 
 
-@router.get("/external/{project}")
-async def list_external_sources(project: str) -> dict:
-    return {"project": project, "sources": load_external_db(project)}
+@router.get("/external/{service}")
+async def list_external_sources(service: str) -> dict:
+    return {"service": service, "sources": load_external_db(service)}
 
 
-@router.delete("/external/{project}/{key_name}")
-async def delete_external_source(project: str, key_name: str) -> dict:
-    sources = load_external_db(project)
+@router.delete("/external/{service}/{key_name}")
+async def delete_external_source(service: str, key_name: str) -> dict:
+    sources = load_external_db(service)
     before = len(sources)
     sources = [s for s in sources if s.get("key_name") != key_name]
-    save_external_db(project, sources)
+    save_external_db(service, sources)
     return {"success": True, "removed": before - len(sources)}
 
 

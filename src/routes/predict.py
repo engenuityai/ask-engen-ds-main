@@ -9,8 +9,8 @@ from fastapi import APIRouter
 router = APIRouter(prefix="/predict", tags=["Prediction"])
 
 
-@router.post("/{project}")
-async def predict(project: str) -> dict:
+@router.post("/{service}")
+async def predict(service: str) -> dict:
     return {
         "status": "coming_soon",
         "message": (

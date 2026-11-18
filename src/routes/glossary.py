@@ -1,9 +1,9 @@
-"""CRUD endpoints for the project-level business glossary.
+"""CRUD endpoints for the service-level business glossary.
 
-GET  /glossary/{project}        — returns current glossary entries
-PUT  /glossary/{project}        — replaces entire glossary with the new list
-POST /glossary/{project}/entry  — appends a single entry
-DELETE /glossary/{project}/{term} — removes the entry whose term matches
+GET  /glossary/{service}        — returns current glossary entries
+PUT  /glossary/{service}        — replaces entire glossary with the new list
+POST /glossary/{service}/entry  — appends a single entry
+DELETE /glossary/{service}/{term} — removes the entry whose term matches
 """
 
 from fastapi import APIRouter, HTTPException
@@ -24,21 +24,21 @@ class GlossaryList(BaseModel):
     entries: list[GlossaryEntry]
 
 
-@router.get("/{project}")
-async def get_glossary(project: str) -> dict:
-    return {"project": project, "entries": load_glossary(project)}
+@router.get("/{service}")
+async def get_glossary(service: str) -> dict:
+    return {"service": service, "entries": load_glossary(service)}
 
 
-@router.put("/{project}")
-async def replace_glossary(project: str, body: GlossaryList) -> dict:
+@router.put("/{service}")
+async def replace_glossary(service: str, body: GlossaryList) -> dict:
     entries = [e.model_dump() for e in body.entries]
-    save_glossary(project, entries)
-    return {"success": True, "project": project, "count": len(entries)}
+    save_glossary(service, entries)
+    return {"success": True, "service": service, "count": len(entries)}
 
 
-@router.post("/{project}/entry")
-async def add_entry(project: str, entry: GlossaryEntry) -> dict:
-    entries = load_glossary(project)
+@router.post("/{service}/entry")
+async def add_entry(service: str, entry: GlossaryEntry) -> dict:
+    entries = load_glossary(service)
     term_lower = entry.term.strip().lower()
     if not term_lower:
         raise HTTPException(status_code=400, detail="term is required")
@@ -51,15 +51,15 @@ async def add_entry(project: str, entry: GlossaryEntry) -> dict:
             break
     if not replaced:
         entries.append(entry.model_dump())
-    save_glossary(project, entries)
+    save_glossary(service, entries)
     return {"success": True, "replaced": replaced, "count": len(entries)}
 
 
-@router.delete("/{project}/{term}")
-async def delete_entry(project: str, term: str) -> dict:
-    entries = load_glossary(project)
+@router.delete("/{service}/{term}")
+async def delete_entry(service: str, term: str) -> dict:
+    entries = load_glossary(service)
     term_lower = term.strip().lower()
     before = len(entries)
     entries = [e for e in entries if e.get("term", "").lower() != term_lower]
-    save_glossary(project, entries)
+    save_glossary(service, entries)
     return {"success": True, "removed": before - len(entries)}
