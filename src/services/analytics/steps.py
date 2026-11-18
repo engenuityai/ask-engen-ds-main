@@ -322,15 +322,6 @@ class IntentionOutcome:
     reasoning: str = ""
 
 
-_RAG_KEYWORDS = frozenset({
-    "document", "documents", "report", "reports", "wiki", "article", "articles",
-    "memo", "memos", "policy", "policies", "file says", "according to",
-    "knowledge base", "summarize", "summary of", "what does the", "find in",
-    "search document", "in the document", "from the document", "pdf", "docx",
-    "internal doc", "internal docs", "uploaded doc", "uploaded file",
-})
-
-
 async def run_intention_classifier(
     *,
     mode: str,
@@ -340,8 +331,6 @@ async def run_intention_classifier(
     user_id: str,
     session_id: str,
 ) -> IntentionOutcome:
-    from src.db import vector_store as _vs
-
     sources = load_external_db(mode)
     if sources:
         q_lower = query.lower()
@@ -413,14 +402,7 @@ async def run_intention_classifier(
                 if intent in ("external", "both") and source_key:
                     return IntentionOutcome(intent=intent, source_key=source_key, reasoning=reasoning)
             except Exception as exc:  # noqa: BLE001
-                console_log(mode, "INTENTION", f"classifier failed ({exc}), falling through to rag/internal")
-
-    kb_docs = _vs.list_documents(mode)
-    if kb_docs:
-        q_lower = query.lower()
-        if any(kw in q_lower for kw in _RAG_KEYWORDS):
-            console_log(mode, "INTENTION", f"intent=rag (keyword match, {len(kb_docs)} doc(s) indexed)")
-            return IntentionOutcome(intent="rag", reasoning="query matches document-retrieval keywords and knowledge docs are present")
+                console_log(mode, "INTENTION", f"classifier failed ({exc}), falling through to internal")
 
     console_log(mode, "INTENTION", "intent=internal")
     return IntentionOutcome(intent="internal", reasoning="default internal routing")

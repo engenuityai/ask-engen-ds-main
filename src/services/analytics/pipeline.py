@@ -26,7 +26,7 @@ from src.config import settings
 from src.db.engine import get_engine
 from src.services.analytics import steps
 from src.core.llm.gate import _llm_semaphore  # noqa: F401 - re-exported; see gate module docstring
-from src.services.analytics.steps import Agent1Outcome, IntentionOutcome, run_rag_query_agent
+from src.services.analytics.steps import Agent1Outcome, IntentionOutcome
 from src.schemas.user_request import QueryResponse, UserRequest
 from src.schemas.query_stages import EnrichRequest, SqlStageResponse
 from src.services.analytics.tools import response_builder
@@ -138,61 +138,6 @@ async def run_query_pipeline(
             user_id=user_request.user_id,
             session_id=user_request.session_id,
         )
-
-    if intention.intent == "rag":
-        console_log(mode, "ROUTE", "rag intent detected — searching knowledge base")
-        with timer.track("rag_query"):
-            try:
-                text_content, follow_ups = await run_rag_query_agent(
-                    mode=mode,
-                    query=effective_query,
-                    answer_id=answer_id,
-                    user_id=user_request.user_id,
-                    session_id=user_request.session_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                console_log(mode, "RAG_QUERY", f"agent raised: {exc}")
-                text_content = "An error occurred searching the knowledge base."
-                follow_ups = []
-
-        response = response_builder.build_response(
-            answer_id=answer_id,
-            question_id=question_id,
-            user_id=user_request.user_id,
-            session_id=user_request.session_id,
-            mode=mode,
-            max_context_window=False,
-            chat_expire=False,
-            text_content=text_content,
-            table=None,
-            chart=None,
-            follow_ups=follow_ups or None,
-            merchant_disambiguation=None,
-        )
-        total_seconds = round(time.perf_counter() - start, 4)
-        console_log(
-            mode, "RESPONSE",
-            f"shape={_response_shape(response)} rag_query "
-            f"stages={timer.stages} total_seconds={total_seconds} answer_id={answer_id}",
-        )
-        background_tasks.add_task(
-            session_memory.append_turn,
-            user_id=user_request.user_id,
-            session_id=user_request.session_id,
-            mode=mode,
-            answer_id=answer_id,
-            query=effective_query,
-            answer=response.answer.model_dump(exclude_none=True),
-            response_type=_response_shape(response),
-            mask_map=None,
-            pending_disambiguation=None,
-        )
-        background_tasks.add_task(
-            log_timing,
-            user_request.user_id, user_request.session_id,
-            answer_id, effective_query, timer.stages, total_seconds, mode,
-        )
-        return response
 
     if intention.intent in ("external", "both") and intention.source_key:
         console_log(mode, "ROUTE", f"{intention.intent} intent detected: source_key={intention.source_key}")
@@ -539,7 +484,7 @@ async def run_sql_stage(
 ) -> SqlStageResponse:
     """Stage 1: build context, classify intent, generate SQL.
 
-    Returns is_complete=True  for out-of-scope / external / rag answers (fully
+    Returns is_complete=True  for out-of-scope / external answers (fully
     resolved here — BE returns the embedded response directly).
     Returns is_complete=False with sql set for in-scope internal queries: BE
     executes the SQL and calls run_enrich_stage with the rows.
@@ -580,33 +525,7 @@ async def run_sql_stage(
             answer_id=answer_id, user_id=user_request.user_id, session_id=user_request.session_id,
         )
 
-    # External and RAG intents are fully resolved here
-    if intention.intent == "rag":
-        console_log(mode, "SQL_STAGE", "rag intent — resolving inline")
-        with timer.track("rag_query"):
-            try:
-                text_content, follow_ups = await run_rag_query_agent(
-                    mode=mode, query=user_request.query, answer_id=answer_id,
-                    user_id=user_request.user_id, session_id=user_request.session_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                text_content = "An error occurred searching the knowledge base."
-                follow_ups = []
-        response = response_builder.build_response(
-            answer_id=answer_id, question_id=question_id,
-            user_id=user_request.user_id, session_id=user_request.session_id, mode=mode,
-            max_context_window=False, chat_expire=False,
-            text_content=text_content, table=None, chart=None,
-            follow_ups=follow_ups or None, merchant_disambiguation=None,
-        )
-        background_tasks.add_task(
-            session_memory.append_turn, user_id=user_request.user_id,
-            session_id=user_request.session_id, mode=mode, answer_id=answer_id,
-            query=user_request.query, answer=response.answer.model_dump(exclude_none=True),
-            response_type="text", mask_map=None, pending_disambiguation=None,
-        )
-        return SqlStageResponse(answer_id=answer_id, question_id=question_id, is_complete=True, response=response)
-
+    # External intent is fully resolved here
     if intention.intent in ("external", "both") and intention.source_key:
         console_log(mode, "SQL_STAGE", f"{intention.intent} intent source_key={intention.source_key} — resolving inline")
         internal_df: pd.DataFrame | None = None
