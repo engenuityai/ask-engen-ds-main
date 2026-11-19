@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI
 
 import src.services.analytics  # noqa: F401 — triggers self-registration in src.services.registry
+import src.services.know_you_company  # noqa: F401 — triggers self-registration in src.services.registry
 
 from src.routes.dashboard import router as dashboard_router
 from src.routes.glossary import router as glossary_router
 from src.routes.knowledge import router as knowledge_router
+from src.routes.kyc import router as kyc_router
 from src.routes.llm import router as llm_router
 from src.routes.predict import router as predict_router
 from src.schemas.user_request import QueryResponse, UserRequest
@@ -55,6 +57,7 @@ app = FastAPI(title="Ask Engen Analytics Engine", lifespan=lifespan)
 app.include_router(dashboard_router)
 app.include_router(glossary_router)
 app.include_router(knowledge_router)
+app.include_router(kyc_router)
 app.include_router(llm_router)
 app.include_router(predict_router)
 

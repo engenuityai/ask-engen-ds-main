@@ -1,1 +1,53 @@
-# TODO: Define Know You Company tasks here.
+kyc_query_task:
+  description: >
+    Answer the user's question using the uploaded company documents as
+    the sole source of truth. Produce a clear, structured text response
+    with cited sources and two follow-up questions.
+
+  # Cacheable — only changes when documents are uploaded or removed.
+  # Served as the Gemini implicit cache prefix for every turn in this service.
+  static_context: |
+    Company documents uploaded for this service:
+
+    {{docs_context}}
+
+  # Per-request volatile — changes on every call, never cacheable.
+  input: |
+    User question: "{{query}}"
+
+    Conversation history (use ONLY to resolve follow-up references or
+    pronouns from a prior turn — do not import topics into a standalone
+    new question):
+
+    {{memory_context}}
+
+  instructions: |
+    1. Read the user's question carefully.
+    2. Search the company documents above for all relevant information.
+    3. If the answer IS found in the documents:
+       - Write a clear, structured response.
+       - Use bullet points for lists or multi-part answers.
+       - Use bold (<b>term</b>) for key terms or important facts.
+       - Use numbered steps for processes or procedures.
+       - Add a subheading if the answer covers multiple distinct areas.
+       - Cite the source document filename in parentheses where helpful,
+         e.g. (Source: employee_handbook.pdf).
+       - When the answer spans multiple documents, synthesize and attribute
+         each piece to its source.
+    4. If the answer is NOT in the documents:
+       - Say clearly: "I couldn't find this in the uploaded documents."
+       - Suggest what type of document might contain that information.
+       - Do NOT guess, invent, or extrapolate information.
+    5. NEVER fabricate facts, figures, names, policies, or procedures that
+       are not explicitly present in the documents above.
+    6. Generate exactly two follow-up questions the user might ask next,
+       grounded in what the documents actually contain.
+
+  output: |
+    Respond with ONLY a single JSON object, no markdown fences:
+    {
+      "text": "<your formatted answer — use <b> tags for bold, plain bullet points with - prefix, numbered steps as 1. 2. 3.>",
+      "followups": ["<follow-up question 1>", "<follow-up question 2>"]
+    }
+
+  agent: kyc_company_agent

@@ -70,10 +70,12 @@ def _fmt_context(n: int) -> str:
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
-# Backend service IDs that map to the DS "analytics" mode
+# Backend service IDs → DS mode strings.
+# Add an entry here whenever BE sends a service_id that differs from the DS mode name.
 _SERVICE_ID_MAP: dict[str, str] = {
     "datapulse": "analytics",
     "analytics": "analytics",
+    "know_your_company": "know_your_company",
 }
 
 

@@ -55,12 +55,14 @@ def count_turns(user_id: str, session_id: str, mode: str) -> int:
     return len(_load_turns(user_id, session_id, mode))
 
 
-def is_context_window_full(user_id: str, session_id: str, mode: str) -> bool:
+def is_context_window_full(
+    user_id: str, session_id: str, mode: str, ratio: float = _MAX_CONTEXT_TOKEN_RATIO
+) -> bool:
     turns = _load_turns(user_id, session_id, mode)
     if not turns:
         return False
     estimated_tokens = _estimate_tokens(format_history_for_prompt(turns))
-    threshold = settings.llm_max_input_tokens * _MAX_CONTEXT_TOKEN_RATIO
+    threshold = settings.llm_max_input_tokens * ratio
     return estimated_tokens >= threshold
 
 
