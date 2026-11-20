@@ -75,7 +75,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 _SERVICE_ID_MAP: dict[str, str] = {
     "datapulse": "analytics",
     "analytics": "analytics",
-    "know_your_company": "know_your_company",
+    "know_your_company": "knowledge",   # pipeline uses mode="knowledge"
 }
 
 
@@ -102,11 +102,11 @@ class ConfigRequest(BaseModel):
 
 
 def _validate_gemini_key(api_key: str) -> None:
-    import google.generativeai as genai
+    from google import genai
 
-    genai.configure(api_key=api_key)
-    # list_models is a lightweight auth-only round-trip (no tokens consumed)
-    list(genai.list_models())
+    client = genai.Client(api_key=api_key)
+    # list is a lightweight auth-only round-trip (no tokens consumed)
+    list(client.models.list())
 
 
 @router.post("/test-key")
@@ -118,7 +118,15 @@ async def test_key(body: TestKeyRequest):
         )
 
     try:
-        await asyncio.to_thread(_validate_gemini_key, body.api_key)
+        await asyncio.wait_for(
+            asyncio.to_thread(_validate_gemini_key, body.api_key),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Key validation timed out — Gemini API did not respond within 15 s"},
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=400,

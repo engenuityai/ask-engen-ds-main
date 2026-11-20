@@ -89,21 +89,18 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
         return []
     if settings.llm_provider == "gemini" and settings.gemini_api_key:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=settings.gemini_api_key)
+            from google import genai
+            from google.genai import types as genai_types
+            client = genai.Client(api_key=settings.gemini_api_key)
             BATCH = 100
             all_embeddings: list[list[float]] = []
             for i in range(0, len(texts), BATCH):
-                result = genai.embed_content(
+                result = client.models.embed_content(
                     model=_EMBED_MODEL,
-                    content=texts[i : i + BATCH],
-                    task_type="retrieval_document",
+                    contents=texts[i : i + BATCH],
+                    config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
                 )
-                batch_embs = result.get("embedding") or []
-                # embed_content may return a single list when given one text
-                if batch_embs and not isinstance(batch_embs[0], list):
-                    batch_embs = [batch_embs]
-                all_embeddings.extend(batch_embs)
+                all_embeddings.extend(e.values for e in result.embeddings)
             return all_embeddings
         except Exception:  # noqa: BLE001
             pass
@@ -115,17 +112,15 @@ def _embed_query(text: str) -> list[float]:
     """Embed a single query string."""
     if settings.llm_provider == "gemini" and settings.gemini_api_key:
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=settings.gemini_api_key)
-            result = genai.embed_content(
+            from google import genai
+            from google.genai import types as genai_types
+            client = genai.Client(api_key=settings.gemini_api_key)
+            result = client.models.embed_content(
                 model=_EMBED_MODEL,
-                content=text,
-                task_type="retrieval_query",
+                contents=text,
+                config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
             )
-            emb = result.get("embedding") or []
-            if emb and isinstance(emb[0], list):
-                emb = emb[0]
-            return emb
+            return result.embeddings[0].values if result.embeddings else []
         except Exception:  # noqa: BLE001
             pass
     return [0.0] * 768

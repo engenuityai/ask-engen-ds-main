@@ -29,8 +29,9 @@ state must survive across requests, so never re-instantiate the client.
 
 from typing import Optional
 
-import google.generativeai as genai
-from google.api_core.exceptions import GoogleAPICallError
+from google import genai
+from google.genai import types as genai_types
+from google.genai.errors import APIError
 
 from src.config import settings
 from src.core.llm.types import (
@@ -52,7 +53,7 @@ from .store import MemoryRateTracker
 # Error mapping (mirrors byok/gemini — kept local to avoid cross-dep)
 # ---------------------------------------------------------------------------
 
-def _map_exc(exc: GoogleAPICallError) -> LLMProviderError:
+def _map_exc(exc: APIError) -> LLMProviderError:
     msg = str(exc)
     low = msg.lower()
     code = getattr(exc, "code", None)
@@ -83,7 +84,7 @@ class _FreeGeminiClient:
     """Singleton — holds tracker + router state across requests."""
 
     def __init__(self, api_key: str) -> None:
-        genai.configure(api_key=api_key)
+        self._client = genai.Client(api_key=api_key)
         self._tracker = MemoryRateTracker()
         self._router  = ModelRouter(self._tracker)
 
@@ -103,18 +104,19 @@ class _FreeGeminiClient:
         self._tracker.increment(model_id)
         console_log(mode, "FREE_GEMINI", f"model={model_id}")
 
-        gemini_model = genai.GenerativeModel(
-            model_id,
-            system_instruction=system,  # auto-cached by Gemini on every call
-        )
         contents = build_contents(static_context, user)
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        )
 
         try:
-            response = gemini_model.generate_content(
-                contents,
-                generation_config={"max_output_tokens": max_tokens},
+            response = self._client.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=config,
             )
-        except GoogleAPICallError as exc:
+        except APIError as exc:
             if is_token_limit_error(str(exc)):
                 raise TokenLimitExceededError(str(exc)) from exc
             raise _map_exc(exc) from exc

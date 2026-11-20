@@ -21,7 +21,7 @@ from src.core.llm.types import (
 # Error mapping
 # ---------------------------------------------------------------------------
 
-def map_exception(exc: "GoogleAPICallError") -> LLMProviderError:
+def map_exception(exc: "APIError") -> LLMProviderError:
     message = str(exc)
     lowered = message.lower()
     status = getattr(exc, "code", None)
@@ -73,36 +73,48 @@ def call_gemini(
     model_name: str,
     static_context: Optional[str],
 ) -> LLMResult:
-    import google.generativeai as genai
-    from google.api_core.exceptions import GoogleAPICallError
+    from google import genai
+    from google.genai import types
+    from google.genai.errors import APIError
 
     api_key = llm_store.get_key(mode, "gemini") or settings.gemini_api_key
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
-    cached_content = None
+    cached_content_name = None
     if static_context and settings.gemini_context_cache_enabled:
         from src.core.llm.providers.byok.gemini.cache import get_or_create_cache
 
-        cached_content = get_or_create_cache(
+        cached = get_or_create_cache(
             mode=mode,
             model_name=model_name,
             system_instruction=system,
             static_context=static_context,
             ttl_seconds=settings.gemini_cache_ttl_seconds,
+            api_key=api_key,
         )
+        if cached is not None:
+            cached_content_name = cached.name
 
-    if cached_content is not None:
-        model = genai.GenerativeModel.from_cached_content(cached_content=cached_content)
+    if cached_content_name:
+        config = types.GenerateContentConfig(
+            cached_content=cached_content_name,
+            max_output_tokens=max_tokens,
+        )
+        contents = user
     else:
-        model = genai.GenerativeModel(model_name, system_instruction=system)
-        if static_context:
-            user = f"{static_context}\n\n{user}"
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        )
+        contents = f"{static_context}\n\n{user}" if static_context else user
 
     try:
-        response = model.generate_content(
-            user, generation_config={"max_output_tokens": max_tokens}
+        response = client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=config,
         )
-    except GoogleAPICallError as exc:
+    except APIError as exc:
         if is_token_limit_error(str(exc)):
             raise TokenLimitExceededError(str(exc)) from exc
         raise map_exception(exc) from exc

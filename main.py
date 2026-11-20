@@ -83,6 +83,21 @@ async def query_default(user_request: UserRequest, background_tasks: BackgroundT
 async def query_sql_stage(project: str, user_request: UserRequest, background_tasks: BackgroundTasks) -> SqlStageResponse:
     if not user_request.mode:
         user_request.mode = project
+
+    # KYC uses full-document context, not SQL — run its pipeline and signal
+    # is_complete=True so the BE skips SQL execution and /enrich entirely.
+    if user_request.mode == "knowledge":
+        from src.services.know_you_company.pipeline import run_query_pipeline
+        full_response = await run_query_pipeline(user_request, background_tasks)
+        return SqlStageResponse(
+            answer_id=full_response.answerId,
+            question_id=full_response.questionId,
+            is_complete=True,
+            max_context_window=full_response.maxContextWindow,
+            chat_expire=full_response.chatExpire,
+            response=full_response,
+        )
+
     return await run_sql_stage(user_request, background_tasks)
 
 

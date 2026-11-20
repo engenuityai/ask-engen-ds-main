@@ -37,6 +37,7 @@ def get_or_create_cache(
     system_instruction: str,
     static_context: str,
     ttl_seconds: int,
+    api_key: str,
 ) -> Optional[Any]:
     """Return a live CachedContent, or None on failure (graceful degradation)."""
     key = _cache_key(mode, model_name, system_instruction, static_context)
@@ -46,16 +47,20 @@ def get_or_create_cache(
     if entry is not None and entry.expires_at - now > _EXPIRY_SAFETY_MARGIN:
         return entry.cached_content
 
-    from google.generativeai import caching
+    from google import genai
+    from google.genai import types
 
     qualified_model = model_name if model_name.startswith("models/") else f"models/{model_name}"
+    client = genai.Client(api_key=api_key)
     try:
-        cached_content = caching.CachedContent.create(
+        cached_content = client.caches.create(
             model=qualified_model,
-            display_name=key,
-            system_instruction=system_instruction,
-            contents=[static_context],
-            ttl=timedelta(seconds=ttl_seconds),
+            config=types.CreateCachedContentConfig(
+                display_name=key,
+                system_instruction=system_instruction,
+                contents=[static_context],
+                ttl=timedelta(seconds=ttl_seconds),
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         console_log(
