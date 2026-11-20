@@ -44,10 +44,10 @@ async def run_kyc_agent(
     answer_id: str,
     user_id: str,
     session_id: str,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], list[str]]:
     """Call Agent 4 with uploaded docs as the Gemini implicit cache prefix.
 
-    Returns (answer_text, follow_ups).
+    Returns (answer_text, sources, follow_ups).
 
     The docs_context is passed as gemini_static_context so it is served from
     Gemini's implicit cache on every turn where the document set has not
@@ -110,8 +110,9 @@ async def run_kyc_agent(
     try:
         decision = _extract_json(result.text)
     except (ValueError, json.JSONDecodeError):
-        return _FALLBACK_ANSWER, []
+        return _FALLBACK_ANSWER, [], []
 
     text = decision.get("text") or _FALLBACK_ANSWER
+    sources = list(decision.get("sources") or [])
     follow_ups = list(decision.get("followups") or [])[:2]
-    return text, follow_ups
+    return text, sources, follow_ups

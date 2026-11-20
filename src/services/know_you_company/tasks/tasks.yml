@@ -1,7 +1,7 @@
 kyc_query_task:
   description: >
     Answer the user's question using the uploaded company documents as
-    the sole source of truth. Produce a clear, structured text response
+    the sole source of truth. Produce a structured, scannable response
     with cited sources and two follow-up questions.
 
   # Cacheable — only changes when documents are uploaded or removed.
@@ -23,30 +23,36 @@ kyc_query_task:
 
   instructions: |
     1. Read the user's question carefully.
-    2. Search the company documents above for all relevant information.
-    3. If the answer IS found in the documents:
-       - Write a clear, structured response.
-       - Use bullet points for lists or multi-part answers.
-       - Use bold (<b>term</b>) for key terms or important facts.
-       - Use numbered steps for processes or procedures.
-       - Add a subheading if the answer covers multiple distinct areas.
-       - Cite the source document filename in parentheses where helpful,
-         e.g. (Source: employee_handbook.pdf).
-       - When the answer spans multiple documents, synthesize and attribute
-         each piece to its source.
-    4. If the answer is NOT in the documents:
+    2. Search the company documents for all relevant information.
+    3. Write a structured answer following these strict formatting rules:
+       a. Start with ONE short opening sentence (max 20 words). Do NOT start
+          with "Based on the uploaded documents" — just answer directly.
+       b. Use ### Subheading whenever the answer covers more than one distinct
+          area or topic. Each subheading goes on its own line.
+       c. Use a bullet list (- item) for any list of items, options, attributes,
+          or areas. NEVER list things as comma-separated prose.
+       d. Use a numbered list (1. 2. 3.) for steps, procedures, or sequences.
+       e. Use <b>term</b> for key terms, names, or important figures.
+       f. Separate each section or list block with a blank line.
+       g. NEVER write a paragraph longer than 2 sentences without breaking it
+          into bullets or a subheading.
+       h. Do NOT put source filenames inside the answer text — put them in
+          the "sources" array instead.
+    4. If the answer is NOT found in the documents:
        - Say clearly: "I couldn't find this in the uploaded documents."
        - Suggest what type of document might contain that information.
        - Do NOT guess, invent, or extrapolate information.
     5. NEVER fabricate facts, figures, names, policies, or procedures that
        are not explicitly present in the documents above.
-    6. Generate exactly two follow-up questions the user might ask next,
+    6. List every source document filename you used in the "sources" array.
+    7. Generate exactly two follow-up questions the user might ask next,
        grounded in what the documents actually contain.
 
   output: |
     Respond with ONLY a single JSON object, no markdown fences:
     {
-      "text": "<your formatted answer — use <b> tags for bold, plain bullet points with - prefix, numbered steps as 1. 2. 3.>",
+      "text": "<your answer — use \\n\\n between sections, ### for subheadings on their own line, - for bullet items, 1. for numbered steps, <b> for bold — no source filenames inside this field>",
+      "sources": ["<source filename 1>", "<source filename 2>"],
       "followups": ["<follow-up question 1>", "<follow-up question 2>"]
     }
 

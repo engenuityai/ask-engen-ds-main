@@ -175,7 +175,11 @@ def build_response(
     chart: Optional[dict],
     follow_ups: Optional[list[str]],
     merchant_disambiguation: Optional[dict] = None,
+    text_sources: Optional[list[str]] = None,
 ) -> QueryResponse:
+    text_block: dict = {"content": text_content}
+    if text_sources:
+        text_block["sources"] = text_sources
     return QueryResponse(
         answerId=answer_id,
         questionId=question_id,
@@ -189,6 +193,6 @@ def build_response(
         maxContextWindow=max_context_window,
         chatExpire=chat_expire,
         merchantDisambiguation=merchant_disambiguation,
-        answer={"text": {"content": text_content}, "table": table, "chart": chart},
+        answer={"text": text_block, "table": table, "chart": chart},
         followUps=follow_ups,
     )

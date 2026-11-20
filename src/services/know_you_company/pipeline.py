@@ -152,11 +152,12 @@ async def run_query_pipeline(
 
     token_limit_hit = False
     text_content = None
+    text_sources: list[str] = []
     follow_ups = None
 
     try:
         with timer.track("kyc_agent"):
-            text_content, follow_ups = await steps.run_kyc_agent(
+            text_content, text_sources, follow_ups = await steps.run_kyc_agent(
                 mode=mode,
                 query=user_request.query,
                 docs_context=docs_context,
@@ -190,6 +191,7 @@ async def run_query_pipeline(
         max_context_window=max_context_window,
         chat_expire=chat_expire,
         text_content=text_content,
+        text_sources=text_sources,
         table=None,
         chart=None,
         follow_ups=follow_ups,
